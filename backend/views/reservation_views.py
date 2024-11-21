@@ -4,9 +4,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from ..models import Reservation
 from ..serializers import ReservationSerializer
-import logging
 
-logger = logging.getLogger(__name__)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_all_reservation(request):
+    # Filtrar las reservaciones del usuario autenticado
+    reservations = Reservation.objects.filter(user=request.user)
+
+    # Serializar las reservaciones
+    serializer = ReservationSerializer(reservations, many=True)
+    return Response(serializer.data)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -18,6 +26,7 @@ def add_reservation(request):
 
     serializer = ReservationSerializer(data=data)
     if serializer.is_valid():
+        print("Datos validados:", serializer.validated_data)
         # Verificar si ya existe una reserva para la misma fecha e instalación
         date = serializer.validated_data['date']
         installation_id = serializer.validated_data['installation_id']
