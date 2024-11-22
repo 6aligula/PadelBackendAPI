@@ -1,6 +1,6 @@
 
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework import status
 from backend.models import User
@@ -38,12 +38,12 @@ class MyTokenObtainPairView(TokenObtainPairView):
 def registerUser(request):
     data = request.data
 
-    # Validar que todos los campos necesarios están presentes
+    # Validar que los campos obligatorios estén presentes y no estén vacíos
     required_fields = ['nip', 'name', 'direccion', 'telefono', 'password']
-    missing_fields = [field for field in required_fields if field not in data]
-    if missing_fields:
+    missing_or_empty_fields = [field for field in required_fields if not data.get(field)]
+    if missing_or_empty_fields:
         return Response(
-            {'detail': f'Faltan los siguientes campos: {", ".join(missing_fields)}'},
+            {'detail': f'Faltan los siguientes campos: {", ".join(missing_or_empty_fields)}'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -71,16 +71,12 @@ def registerUser(request):
             password=make_password(password)
         )
         serializer = UserSerializerWithToken(user, many=False)
-        print(f'Usuario registrado con éxito: {nip}.')
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     except Exception as e:
-        # Capturar y registrar el error
-        print(f'Error al registrar usuario: {str(e)}.')
         return Response(
-            {'detail': 'Ocurrió un error al registrar el usuario.'},
+            {'detail': f'Ocurrió un error al registrar el usuario: {str(e)}'},
             status=status.HTTP_400_BAD_REQUEST
         )
-
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -89,6 +85,77 @@ def getUserProfile(request):
     serializer = UserSerializer(user, many=False)
     return Response(serializer.data)
 
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def updateUser(request, pk):
+    try:
+        user = User.objects.get(id=pk)
+    except User.DoesNotExist:
+        return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Solo un admin o el propio usuario puede actualizar datos
+    if not (request.user.is_staff or request.user.id == user.id):
+        return Response({'detail': 'No tienes permiso para actualizar este usuario.'}, status=status.HTTP_403_FORBIDDEN)
+
+    data = request.data
+
+    # Actualizar solo los campos proporcionados
+    update_attribute_if_provided(user, 'first_name', data.get('name', None))
+    update_attribute_if_provided(user, 'direccion', data.get('direccion', None))
+    update_attribute_if_provided(user, 'telefono', data.get('telefono', None))
+    if request.user.is_staff:
+        update_attribute_if_provided(user, 'is_staff', data.get('isAdmin', None))
+
+    # Actualizar la contraseña si es proporcionada y no vacía
+    if data.get('password') and data['password'].strip() != '':
+        user.password = make_password(data['password'].strip())
+
+    user.save()
+
+    serializer = UserSerializer(user, many=False)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def updateUserProfile(request):
+    user = request.user
+    data = request.data
+
+    # Actualizar solo los campos proporcionados
+    update_attribute_if_provided(user, 'first_name', data.get('name', None))
+    update_attribute_if_provided(user, 'direccion', data.get('direccion', None))
+    update_attribute_if_provided(user, 'telefono', data.get('telefono', None))
+
+    # Actualizar la contraseña si es proporcionada y no vacía
+    if data.get('password') and data['password'].strip() != '':
+        user.password = make_password(data['password'].strip())
+
+    user.save()
+
+    serializer = UserSerializer(user, many=False)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['DELETE'])
+@permission_classes([IsAdminUser])
+def deleteUser(request, pk):
+    try:
+        user = User.objects.get(id=pk)
+    except User.DoesNotExist:
+        return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # No permitir que el administrador se elimine a sí mismo
+    if request.user.id == user.id:
+        return Response({'detail': 'No puedes eliminar tu propia cuenta.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.delete()
+    return Response({'detail': 'Usuario eliminado con éxito.'}, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def getUsers(request):
+    users = User.objects.all()
+    serializer = UserSerializer(users, many=True)
+    return Response(serializer.data)
 
 def update_attribute_if_provided(instance, attribute, value):
     """
@@ -101,24 +168,3 @@ def update_attribute_if_provided(instance, attribute, value):
     if value is not None and value != '':
         setattr(instance, attribute, value)
 
-
-@api_view(['PUT'])
-@permission_classes([IsAuthenticated])
-def updateUserProfile(request):
-    user = request.user
-    data = request.data
-
-    # Actualiza el nombre, username/email y password si se proporcionan y no están vacíos
-    update_attribute_if_provided(user, 'first_name', data.get('name'))
-    email = data.get('email')
-    if email:
-        update_attribute_if_provided(user, 'username', email)
-        update_attribute_if_provided(user, 'email', email)
-    if 'password' in data and data['password']:
-        user.password = make_password(data['password'])
-
-    user.save()
-
-    # Vuelve a generar el serializer para reflejar los cambios
-    serializer = UserSerializerWithToken(user, many=False)
-    return Response(serializer.data)

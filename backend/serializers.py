@@ -48,17 +48,25 @@ class ReservationSerializer(serializers.ModelSerializer):
     def get_user(self, obj):
         return obj.user.first_name  # O devuelve obj.user.first_name si prefieres el primer nombre
 
-    def create(self, validated_data):
-        installation_id = validated_data.pop('installation_id')  # Extrae el ID como entero
-        try:
-            installation = Installation.objects.get(id=installation_id)  # Busca el objeto
-        except Installation.DoesNotExist:
+    def validate(self, attrs):
+        installation_id = attrs.get('installation_id')
+        date = attrs.get('date')
+
+        # Verificar si la instalación existe
+        if not Installation.objects.filter(id=installation_id).exists():
             raise serializers.ValidationError({"installation_id": "Instalación no encontrada."})
 
-        # Crea la reserva con el objeto `installation` y los datos validados
-        reservation = Reservation.objects.create(installation=installation, **validated_data)
-        return reservation
+        # Verificar duplicidad de reserva
+        if Reservation.objects.filter(date=date, installation_id=installation_id).exists():
+            raise serializers.ValidationError({
+                "non_field_errors": "Esta instalación ya está reservada para esta fecha."
+            })
 
+        return attrs
 
+    def create(self, validated_data):
+        installation_id = validated_data.pop('installation_id')
+        installation = Installation.objects.get(id=installation_id)
+        return Reservation.objects.create(installation=installation, **validated_data)
 
 
